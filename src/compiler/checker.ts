@@ -2235,7 +2235,6 @@ namespace ts {
             getSymbolDisplayBuilder().buildTypeDisplay(type, writer, enclosingDeclaration, flags);
             let result = writer.string();
             releaseStringWriter(writer);
-
             const maxLength = compilerOptions.noErrorTruncation || flags & TypeFormatFlags.NoTruncation ? undefined : 100;
             if (maxLength && result.length >= maxLength) {
                 result = result.substr(0, maxLength - "...".length) + "...";
@@ -2955,7 +2954,7 @@ namespace ts {
                                     (<TransientSymbol>symbol).mapper, writer, enclosingDeclaration);
                             }
                             else {
-                                buildTypeParameterDisplayFromSymbol(parentSymbol, writer, enclosingDeclaration);
+                                buildTypeParameterDisplayFromSymbol(parentSymbol, writer, enclosingDeclaration, typeFlags);
                             }
                         }
                         appendPropertyOrElementAccessForSymbol(symbol, writer);
@@ -3019,8 +3018,9 @@ namespace ts {
             }
 
             function buildTypeDisplay(type: Type, writer: SymbolWriter, enclosingDeclaration?: Node, globalFlags?: TypeFormatFlags, symbolStack?: Symbol[]) {
-                const globalFlagsToPass = globalFlags & TypeFormatFlags.WriteOwnNameForAnyLike;
+                const globalFlagsToPass = globalFlags & (TypeFormatFlags.WriteOwnNameForAnyLike | TypeFormatFlags.SuperSimple);
                 let inObjectTypeLiteral = false;
+
                 return writeType(type, globalFlags);
 
                 function writeType(type: Type, flags: TypeFormatFlags) {
@@ -3047,8 +3047,13 @@ namespace ts {
                         appendSymbolNameOnly(type.symbol, writer);
                     }
                     else if (getObjectFlags(type) & ObjectFlags.ClassOrInterface || type.flags & (TypeFlags.Enum | TypeFlags.TypeParameter)) {
-                        // The specified symbol flags need to be reinterpreted as type flags
-                        buildSymbolDisplay(type.symbol, writer, enclosingDeclaration, SymbolFlags.Type, SymbolFormatFlags.None, nextFlags);
+                        if (type.flags & TypeFlags.TypeParameter && globalFlags & TypeFormatFlags.SuperSimple) {
+                            writer.writeStringLiteral("object");
+                        }
+                        else {
+                            // The specified symbol flags need to be reinterpreted as type flags
+                            buildSymbolDisplay(type.symbol, writer, enclosingDeclaration, SymbolFlags.Type, SymbolFormatFlags.None, nextFlags);
+                        }
                     }
                     else if (!(flags & TypeFormatFlags.InTypeAlias) && type.aliasSymbol &&
                         isSymbolAccessible(type.aliasSymbol, enclosingDeclaration, SymbolFlags.Type, /*shouldComputeAliasesToMakeVisible*/ false).accessibility === SymbolAccessibility.Accessible) {
@@ -3065,15 +3070,25 @@ namespace ts {
                         writer.writeStringLiteral(literalTypeToString(<LiteralType>type));
                     }
                     else if (type.flags & TypeFlags.Index) {
-                        writer.writeKeyword("keyof");
-                        writeSpace(writer);
-                        writeType((<IndexType>type).type, TypeFormatFlags.InElementType);
+                        if (globalFlags & TypeFormatFlags.SuperSimple) {
+                            writer.writeStringLiteral("string");
+                        }
+                        else {
+                            writer.writeKeyword("keyof");
+                            writeSpace(writer);
+                            writeType((<IndexType>type).type, TypeFormatFlags.InElementType);
+                        }
                     }
                     else if (type.flags & TypeFlags.IndexedAccess) {
-                        writeType((<IndexedAccessType>type).objectType, TypeFormatFlags.InElementType);
-                        writePunctuation(writer, SyntaxKind.OpenBracketToken);
-                        writeType((<IndexedAccessType>type).indexType, TypeFormatFlags.None);
-                        writePunctuation(writer, SyntaxKind.CloseBracketToken);
+                        if (globalFlags & TypeFormatFlags.SuperSimple) {
+                            writer.writeStringLiteral("object");
+                        }
+                        else {
+                            writeType((<IndexedAccessType>type).objectType, TypeFormatFlags.InElementType);
+                            writePunctuation(writer, SyntaxKind.OpenBracketToken);
+                            writeType((<IndexedAccessType>type).indexType, TypeFormatFlags.None);
+                            writePunctuation(writer, SyntaxKind.CloseBracketToken);
+                        }
                     }
                     else {
                         // Should never get here
@@ -3167,7 +3182,12 @@ namespace ts {
                         writeTypeList(formatUnionTypes(type.types), SyntaxKind.BarToken);
                     }
                     else {
-                        writeTypeList(type.types, SyntaxKind.AmpersandToken);
+                        if (globalFlags & TypeFormatFlags.SuperSimple) {
+                            writer.writeStringLiteral("object");
+                        }
+                        else {
+                            writeTypeList(type.types, SyntaxKind.AmpersandToken);
+                        }
                     }
                     if (flags & TypeFormatFlags.InElementType) {
                         writePunctuation(writer, SyntaxKind.CloseParenToken);
@@ -3299,15 +3319,20 @@ namespace ts {
                         }
                     }
 
-                    const saveInObjectTypeLiteral = inObjectTypeLiteral;
-                    inObjectTypeLiteral = true;
-                    writePunctuation(writer, SyntaxKind.OpenBraceToken);
-                    writer.writeLine();
-                    writer.increaseIndent();
-                    writeObjectLiteralType(resolved);
-                    writer.decreaseIndent();
-                    writePunctuation(writer, SyntaxKind.CloseBraceToken);
-                    inObjectTypeLiteral = saveInObjectTypeLiteral;
+                    if (globalFlags & TypeFormatFlags.SuperSimple) {
+                        writer.writeStringLiteral("object");
+                    }
+                    else {
+                        const saveInObjectTypeLiteral = inObjectTypeLiteral;
+                        inObjectTypeLiteral = true;
+                        writePunctuation(writer, SyntaxKind.OpenBraceToken);
+                        writer.writeLine();
+                        writer.increaseIndent();
+                        writeObjectLiteralType(resolved);
+                        writer.decreaseIndent();
+                        writePunctuation(writer, SyntaxKind.CloseBraceToken);
+                        inObjectTypeLiteral = saveInObjectTypeLiteral;
+                    }
                 }
 
                 function writeObjectLiteralType(resolved: ResolvedType) {
@@ -3552,13 +3577,15 @@ namespace ts {
                     writeSpace(writer);
                 }
 
-                if (signature.target && (flags & TypeFormatFlags.WriteTypeArgumentsOfSignature)) {
-                    // Instantiated signature, write type arguments instead
-                    // This is achieved by passing in the mapper separately
-                    buildDisplayForTypeArgumentsAndDelimiters(signature.target.typeParameters, signature.mapper, writer, enclosingDeclaration);
-                }
-                else {
-                    buildDisplayForTypeParametersAndDelimiters(signature.typeParameters, writer, enclosingDeclaration, flags, symbolStack);
+                if (!(flags & TypeFormatFlags.SuperSimple)) {
+                    if (signature.target && (flags & TypeFormatFlags.WriteTypeArgumentsOfSignature)) {
+                        // Instantiated signature, write type arguments instead
+                        // This is achieved by passing in the mapper separately
+                        buildDisplayForTypeArgumentsAndDelimiters(signature.target.typeParameters, signature.mapper, writer, enclosingDeclaration);
+                    }
+                    else {
+                        buildDisplayForTypeParametersAndDelimiters(signature.typeParameters, writer, enclosingDeclaration, flags, symbolStack);
+                    }
                 }
 
                 buildDisplayForParametersAndDelimiters(signature.thisParameter, signature.parameters, writer, enclosingDeclaration, flags, symbolStack);

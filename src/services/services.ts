@@ -1351,7 +1351,7 @@ namespace ts {
             return Completions.getCompletionEntrySymbol(program.getTypeChecker(), log, program.getCompilerOptions(), getValidSourceFile(fileName), position, entryName);
         }
 
-        function getQuickInfoAtPosition(fileName: string, position: number): QuickInfo {
+        function getQuickInfoAtPosition(fileName: string, position: number, simplified?: boolean): QuickInfo {
             synchronizeHostData();
 
             const sourceFile = getValidSourceFile(fileName);
@@ -1384,6 +1384,7 @@ namespace ts {
                                 kindModifiers: ScriptElementKindModifier.none,
                                 textSpan: createTextSpan(node.getStart(), node.getWidth()),
                                 displayParts: typeToDisplayParts(typeChecker, type, getContainerNode(node)),
+                                simpleDisplayParts: simplified && typeToDisplayParts(typeChecker, type, getContainerNode(node), TypeFormatFlags.SuperSimple),
                                 documentation: type.symbol ? type.symbol.getDocumentationComment() : undefined,
                                 tags: type.symbol ? type.symbol.getJsDocTags() : undefined
                             };
@@ -1393,12 +1394,14 @@ namespace ts {
                 return undefined;
             }
 
-            const displayPartsDocumentationsAndKind = SymbolDisplay.getSymbolDisplayPartsDocumentationAndSymbolKind(typeChecker, symbol, sourceFile, getContainerNode(node), node);
+            const displayPartsDocumentationsAndKind = SymbolDisplay.getSymbolDisplayPartsDocumentationAndSymbolKind(typeChecker, symbol, sourceFile, getContainerNode(node), node, undefined);
+            const simpleDisplayPartsDocumentationsAndKind = simplified && SymbolDisplay.getSymbolDisplayPartsDocumentationAndSymbolKind(typeChecker, symbol, sourceFile, getContainerNode(node), node, undefined, simplified);
             return {
                 kind: displayPartsDocumentationsAndKind.symbolKind,
                 kindModifiers: SymbolDisplay.getSymbolModifiers(symbol),
                 textSpan: createTextSpan(node.getStart(), node.getWidth()),
                 displayParts: displayPartsDocumentationsAndKind.displayParts,
+                simpleDisplayParts: simplified && simpleDisplayPartsDocumentationsAndKind.displayParts,
                 documentation: displayPartsDocumentationsAndKind.documentation,
                 tags: displayPartsDocumentationsAndKind.tags
             };
